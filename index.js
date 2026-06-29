@@ -121,6 +121,13 @@ async function updatePlayerList() {
 
 client.once(Events.ClientReady, (c) => {
   console.log(`Logged in as ${c.user.tag}`);
+  console.log(
+    `Auto-delete: ${
+      AUTODELETE_CHANNEL
+        ? `ON for channel ${AUTODELETE_CHANNEL}`
+        : 'OFF — AUTODELETE_CHANNEL_ID is not set'
+    }`
+  );
   updatePlayerList();
 });
 
@@ -133,6 +140,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   try {
     await message.delete();
+    console.log(`Deleted a message in #welcome from ${message.author.tag}`);
   } catch (err) {
     // Usually means the bot is missing "Manage Messages" in that channel
     console.error('Could not delete a message in the auto-clean channel:', err.message);
