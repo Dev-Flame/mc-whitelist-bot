@@ -1,7 +1,13 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Events, MessageFlags } = require('discord.js');
+const {
+  Client,
+  GatewayIntentBits,
+  Events,
+  MessageFlags,
+  EmbedBuilder,
+} = require('discord.js');
 const { Rcon } = require('rcon-client');
-const { load, save } = require('./store');
+const { load, save, loadMeta, saveMeta } = require('./store');
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -46,8 +52,66 @@ async function rconCommand(cmd) {
   }
 }
 
+// Channel where the live player list lives (optional)
+const PLAYERLIST_CHANNEL = process.env.PLAYERLIST_CHANNEL_ID || null;
+
+// Builds/updates one message in #playerlist showing every Discord user
+// next to the Minecraft name(s) they whitelisted. Edits the same message
+// each time instead of posting new ones.
+async function updatePlayerList() {
+  if (!PLAYERLIST_CHANNEL) return;
+
+  let channel;
+  try {
+    channel = await client.channels.fetch(PLAYERLIST_CHANNEL);
+  } catch {
+    return;
+  }
+  if (!channel || !channel.isTextBased()) return;
+
+  const data = load();
+  const userIds = Object.keys(data);
+
+  let description;
+  if (userIds.length === 0) {
+    description = 'No players have been whitelisted yet.';
+  } else {
+    description = userIds
+      .map((id) => `<@${id}> — ${data[id].join(', ')}`)
+      .join('\n');
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('🎮 Whitelisted Players')
+    .setDescription(description)
+    .setColor(0x57f287)
+    .setFooter({
+      text: `${userIds.length} player${userIds.length === 1 ? '' : 's'}`,
+    })
+    .setTimestamp();
+
+  // Don't ping anyone when posting/editing the list
+  const payload = { embeds: [embed], allowedMentions: { parse: [] } };
+
+  const meta = loadMeta();
+  if (meta.playerListMessageId) {
+    try {
+      const msg = await channel.messages.fetch(meta.playerListMessageId);
+      await msg.edit(payload);
+      return;
+    } catch {
+      // old message was deleted; fall through and make a new one
+    }
+  }
+
+  const sent = await channel.send(payload);
+  meta.playerListMessageId = sent.id;
+  saveMeta(meta);
+}
+
 client.once(Events.ClientReady, (c) => {
   console.log(`Logged in as ${c.user.tag}`);
+  updatePlayerList();
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -91,7 +155,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // Already added by this same person?
   if (myList.some((n) => n.toLowerCase() === realName.toLowerCase())) {
-    return finish(`**${realName}** is already on your whitelist.`);
+    return finish(`**${realName}** is already on the whitelist.`);
   }
 
   // Hit their personal cap?
@@ -113,12 +177,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
   data[userId] = myList;
   save(data);
 
-  const left = MAX_PER_USER - myList.length;
-  return finish(
-    `✅ **${realName}** was added to the whitelist! You have ${left} slot${
-      left === 1 ? '' : 's'
-    } left.`
-  );
+  // Refresh the #playerlist roster
+  updatePlayerList();
+
+  return finish(`✅ **${realName}** was added to the whitelist!`);
 });
 
 client.login(process.env.DISCORD_TOKEN);

@@ -1,0 +1,22 @@
+services:
+  whitelist-bot:
+    build: .
+    container_name: mc-whitelist-bot
+    restart: unless-stopped
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - CLIENT_ID=${CLIENT_ID}
+      - GUILD_ID=${GUILD_ID}
+      - ALLOWED_CHANNEL_ID=${ALLOWED_CHANNEL_ID}
+      - PLAYERLIST_CHANNEL_ID=${PLAYERLIST_CHANNEL_ID}
+      - MAX_WHITELIST_PER_USER=${MAX_WHITELIST_PER_USER}
+      - DELETE_AFTER_MS=${DELETE_AFTER_MS}
+      - RCON_HOST=${RCON_HOST}
+      - RCON_PORT=${RCON_PORT}
+      - RCON_PASSWORD=${RCON_PASSWORD}
+      - DATA_DIR=/data
+    volumes:
+      - whitelist-data:/data
+
+volumes:
+  whitelist-data:
