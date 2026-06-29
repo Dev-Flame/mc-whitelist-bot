@@ -9,7 +9,9 @@ const {
 const { Rcon } = require('rcon-client');
 const { load, save, loadMeta, saveMeta } = require('./store');
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+});
 
 // If set in .env, the command only works in this one channel
 const ALLOWED_CHANNEL = process.env.ALLOWED_CHANNEL_ID || null;
@@ -55,63 +57,86 @@ async function rconCommand(cmd) {
 // Channel where the live player list lives (optional)
 const PLAYERLIST_CHANNEL = process.env.PLAYERLIST_CHANNEL_ID || null;
 
+// Channel to auto-clean: any normal message here gets deleted.
+// Slash commands are NOT messages, so /whitelist still works here.
+const AUTODELETE_CHANNEL = process.env.AUTODELETE_CHANNEL_ID || null;
+
 // Builds/updates one message in #playerlist showing every Discord user
 // next to the Minecraft name(s) they whitelisted. Edits the same message
 // each time instead of posting new ones.
 async function updatePlayerList() {
   if (!PLAYERLIST_CHANNEL) return;
 
-  let channel;
   try {
-    channel = await client.channels.fetch(PLAYERLIST_CHANNEL);
-  } catch {
-    return;
-  }
-  if (!channel || !channel.isTextBased()) return;
+    const channel = await client.channels.fetch(PLAYERLIST_CHANNEL);
+    if (!channel || !channel.isTextBased()) return;
 
-  const data = load();
-  const userIds = Object.keys(data);
+    const data = load();
+    const userIds = Object.keys(data);
 
-  let description;
-  if (userIds.length === 0) {
-    description = 'No players have been whitelisted yet.';
-  } else {
-    description = userIds
-      .map((id) => `<@${id}> — ${data[id].join(', ')}`)
-      .join('\n');
-  }
-
-  const embed = new EmbedBuilder()
-    .setTitle('🎮 Whitelisted Players')
-    .setDescription(description)
-    .setColor(0x57f287)
-    .setFooter({
-      text: `${userIds.length} player${userIds.length === 1 ? '' : 's'}`,
-    })
-    .setTimestamp();
-
-  // Don't ping anyone when posting/editing the list
-  const payload = { embeds: [embed], allowedMentions: { parse: [] } };
-
-  const meta = loadMeta();
-  if (meta.playerListMessageId) {
-    try {
-      const msg = await channel.messages.fetch(meta.playerListMessageId);
-      await msg.edit(payload);
-      return;
-    } catch {
-      // old message was deleted; fall through and make a new one
+    let description;
+    if (userIds.length === 0) {
+      description = 'No players have been whitelisted yet.';
+    } else {
+      description = userIds
+        .map((id) => `<@${id}> — ${data[id].join(', ')}`)
+        .join('\n');
     }
-  }
 
-  const sent = await channel.send(payload);
-  meta.playerListMessageId = sent.id;
-  saveMeta(meta);
+    const embed = new EmbedBuilder()
+      .setTitle('🎮 Whitelisted Players')
+      .setDescription(description)
+      .setColor(0x57f287)
+      .setFooter({
+        text: `${userIds.length} player${userIds.length === 1 ? '' : 's'}`,
+      })
+      .setTimestamp();
+
+    // Don't ping anyone when posting/editing the list
+    const payload = { embeds: [embed], allowedMentions: { parse: [] } };
+
+    const meta = loadMeta();
+    if (meta.playerListMessageId) {
+      try {
+        const msg = await channel.messages.fetch(meta.playerListMessageId);
+        await msg.edit(payload);
+        return;
+      } catch {
+        // old message was deleted; fall through and make a new one
+      }
+    }
+
+    const sent = await channel.send(payload);
+    meta.playerListMessageId = sent.id;
+    saveMeta(meta);
+  } catch (err) {
+    // Never let a channel/permission problem crash the bot.
+    console.error(
+      'Could not update #playerlist. Make sure the bot has View Channel, ' +
+        'Send Messages, Embed Links, and Read Message History there. Error:',
+      err.message
+    );
+  }
 }
 
 client.once(Events.ClientReady, (c) => {
   console.log(`Logged in as ${c.user.tag}`);
   updatePlayerList();
+});
+
+// Auto-clean: delete any normal message posted in the chosen channel.
+// This does NOT affect /whitelist, because slash commands aren't messages.
+client.on(Events.MessageCreate, async (message) => {
+  if (!AUTODELETE_CHANNEL) return;
+  if (message.channelId !== AUTODELETE_CHANNEL) return;
+  if (message.author.bot) return; // leave bot/webhook posts alone
+
+  try {
+    await message.delete();
+  } catch (err) {
+    // Usually means the bot is missing "Manage Messages" in that channel
+    console.error('Could not delete a message in the auto-clean channel:', err.message);
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
